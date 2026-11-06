@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Batch WebP Converter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body class="bg-gray-50 font-sans text-gray-800 min-h-screen flex flex-col justify-between">
+
+  <header class="bg-white border-b border-gray-200 py-4 px-6 shadow-sm">
+    <div class="max-w-4xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <div class="bg-red-500 text-white font-bold p-1.5 rounded-lg text-xs tracking-wider">CONVERT</div>
+        <span class="font-bold text-lg text-gray-900">LocalConvert</span>
+      </div>
+      <span class="text-xs font-semibold px-2.5 py-1 bg-green-100 text-green-800 rounded-full">Client-Side Engine</span>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto w-full px-4 py-12 flex-1">
+    
+    <div class="text-center mb-8">
+      <h1 class="text-3xl font-extrabold text-gray-900 mb-2">Batch WebP Converter</h1>
+      <p class="text-gray-500 text-sm">Convert WebP images locally. Converted files remain available until explicitly cleared.</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      
+      <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-red-500 transition-colors cursor-pointer bg-gray-50/50 mb-6">
+        <input type="file" id="fileInput" accept="image/webp" multiple class="hidden" />
+        <svg class="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+        </svg>
+        <p class="text-sm font-medium text-gray-700 mb-1">Click to select files or drag & drop WebP images</p>
+        <p class="text-xs text-gray-400">Add as many files as you need—new files will be added to the queue below</p>
+      </div>
+
+      <div id="batchHeader" class="hidden border border-gray-200 rounded-lg p-4 bg-gray-50 flex flex-col md:flex-row items-center justify-between gap-4 mb-4">
+        <div>
+          <p id="fileCountText" class="text-sm font-bold text-gray-800">0 files total</p>
+          <p id="totalSizeText" class="text-xs text-gray-500">0 KB total</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Format</span>
+            <select id="formatSelect" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-red-500">
+              <option value="image/png">PNG</option>
+              <option value="image/jpeg">JPG</option>
+            </select>
+          </div>
+
+          <button id="convertAllBtn" class="bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded-md text-sm transition-colors shadow-xs">
+            Convert Pending
+          </button>
+          
+          <button id="clearAllBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium px-3 py-2 rounded-md text-sm transition-colors">
+            Clear Queue
+          </button>
+        </div>
+      </div>
+
+      <div id="fileList" class="space-y-2 mb-6 max-h-96 overflow-y-auto"></div>
+
+      <div id="downloadContainer" class="hidden text-center border-t border-gray-100 pt-4">
+        <button id="downloadZipBtn" class="bg-green-600 hover:bg-green-700 text-white font-medium px-6 py-2.5 rounded-md text-sm transition-colors shadow-xs">
+          Download All Converted as ZIP
+        </button>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const batchHeader = document.getElementById('batchHeader');
+    const fileCountText = document.getElementById('fileCountText');
+    const totalSizeText = document.getElementById('totalSizeText');
+    const fileList = document.getElementById('fileList');
+    const convertAllBtn = document.getElementById('convertAllBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+    const formatSelect = document.getElementById('formatSelect');
+    const downloadContainer = document.getElementById('downloadContainer');
+    const downloadZipBtn = document.getElementById('downloadZipBtn');
+
+    // Master state arrays
+    let queue = []; // Holds objects: { id, file, status, convertedBlob, newName, blobUrl }
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      handleFiles(Array.from(e.target.files));
+      fileInput.value = ''; // Reset so same file can be chosen again if needed
+    });
+
+    ['dragenter', 'dragover'].forEach(name => {
+      dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.add('border-red-500', 'bg-red-50/20'); });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+      dropZone.addEventListener(name, (e) => { e.preventDefault(); dropZone.classList.remove('border-red-500', 'bg-red-50/20'); });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      if (e.dataTransfer.files.length) handleFiles(Array.from(e.dataTransfer.files));
+    });
+
+    function handleFiles(files) {
+      const webpFiles = files.filter(f => f.type.includes('webp') || f.name.toLowerCase().endsWith('.webp'));
+      
+      if (webpFiles.length === 0) {
+        alert('Please select valid .webp image files.');
+        return;
+      }
+
+      // Append new files to existing queue
+      webpFiles.forEach(file => {
+        queue.push({
+          id: 'file-' + Math.random().toString(36).substr(2, 9),
+          file: file,
+          status: 'pending', // pending, processing, done
+          convertedBlob: null,
+          newName: '',
+          blobUrl: null
+        });
+      });
+
+      renderUI();
+    }
+
+    function renderUI() {
+      if (queue.length === 0) {
+        batchHeader.classList.add('hidden');
+        fileList.innerHTML = '';
+        downloadContainer.classList.add('hidden');
+        return;
+      }
+
+      batchHeader.classList.remove('hidden');
+
+      // Update Header Stats
+      const totalBytes = queue.reduce((acc, item) => acc + item.file.size, 0);
+      fileCountText.textContent = `${queue.length} file${queue.length > 1 ? 's' : ''} in queue`;
+      totalSizeText.textContent = (totalBytes / (1024 * 1024)).toFixed(2) + ' MB total';
+
+      // Render Queue Items
+      fileList.innerHTML = '';
+      queue.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = "flex items-center justify-between p-3 border border-gray-100 rounded-lg bg-white text-sm shadow-2xs";
+
+        let statusMarkup = '';
+        if (item.status === 'pending') {
+          statusMarkup = `<span class="text-xs font-semibold text-gray-400">Pending</span>`;
+        } else if (item.status === 'processing') {
+          statusMarkup = `<span class="text-xs font-semibold text-yellow-600">Converting...</span>`;
+        } else if (item.status === 'done') {
+          statusMarkup = `
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-green-600">Done ✓</span>
+              <a href="${item.blobUrl}" download="${item.newName}" class="bg-green-100 hover:bg-green-200 text-green-800 text-xs font-bold px-2.5 py-1 rounded transition-colors">
+                Download
+              </a>
+            </div>
+          `;
+        }
+
+        row.innerHTML = `
+          <div class="flex items-center gap-3 truncate">
+            <span class="bg-gray-100 text-gray-500 font-bold text-xs p-1.5 rounded">WEBP</span>
+            <span class="font-medium text-gray-700 truncate max-w-xs">${item.file.name}</span>
+            <span class="text-xs text-gray-400">(${(item.file.size / 1024).toFixed(1)} KB)</span>
+          </div>
+          <div>${statusMarkup}</div>
+        `;
+        fileList.appendChild(row);
+      });
+
+      // Show/Hide Download Zip Button if at least one file is converted
+      const hasConverted = queue.some(i => i.status === 'done');
+      if (hasConverted) {
+        downloadContainer.classList.remove('hidden');
+      }
+    }
+
+    convertAllBtn.addEventListener('click', async () => {
+      const pendingItems = queue.filter(i => i.status === 'pending');
+      if (pendingItems.length === 0) return;
+
+      convertAllBtn.disabled = true;
+      convertAllBtn.textContent = 'Processing...';
+
+      const targetFormat = formatSelect.value;
+      const ext = targetFormat === 'image/png' ? 'png' : 'jpg';
+
+      for (let item of pendingItems) {
+        item.status = 'processing';
+        renderUI();
+
+        const blob = await convertSingleFile(item.file, targetFormat);
+        item.convertedBlob = blob;
+        item.newName = item.file.name.replace(/\.[^/.]+$/, "") + `.${ext}`;
+        item.blobUrl = URL.createObjectURL(blob);
+        item.status = 'done';
+
+        renderUI();
+      }
+
+      convertAllBtn.disabled = false;
+      convertAllBtn.textContent = 'Convert Pending';
+    });
+
+    function convertSingleFile(file, format) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+
+            if (format === 'image/jpeg') {
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            ctx.drawImage(img, 0, 0);
+            canvas.toBlob((blob) => resolve(blob), format, 0.92);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Explicit Clear Queue Button
+    clearAllBtn.addEventListener('click', () => {
+      // Revoke created blob URLs to prevent browser memory leaks
+      queue.forEach(item => {
+        if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
+      });
+      queue = [];
+      renderUI();
+    });
+
+    // ZIP Generation Logic
+    downloadZipBtn.addEventListener('click', () => {
+      const zip = new JSZip();
+      const convertedItems = queue.filter(i => i.status === 'done');
+
+      convertedItems.forEach(item => {
+        zip.file(item.newName, item.convertedBlob);
+      });
+
+      downloadZipBtn.textContent = 'Building ZIP...';
+
+      zip.generateAsync({ type: 'blob' }).then((content) => {
+        const a = document.createElement('a');
+        const url = URL.createObjectURL(content);
+        a.href = url;
+        a.download = 'converted_images.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+        downloadZipBtn.textContent = 'Download All Converted as ZIP';
+      });
+    });
+  </script>
+</body>
+</html>
